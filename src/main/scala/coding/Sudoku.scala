@@ -1,7 +1,8 @@
 package coding
 
 import scalaz._
-import scalaz.Scalaz._
+import Scalaz._
+import Show._
 
 
 object Sudoku {
@@ -11,8 +12,8 @@ object Sudoku {
 
   //These lens's make it possible to "update" the value at a specific location in the game board.
   //They are really making it easy to return a new game board with the new values
-  def listLens[T](i: Int): Lens[List[T], T] =
-    Lens(a => a(i), (list, value) => (list.take(i) :+ value) ::: list.takeRight(list.length - (i + 1)))
+  def listLens[T](i: Int): List[T] @> T =
+    Lens(list => Store(value => (list.take(i) :+ value) ::: list.takeRight(list.length - (i + 1)), list(i)))
   def rowLens(i: Int):Lens[List[List[Option[Int]]], List[Option[Int]]] = listLens(i)
   def columnLens(i: Int): Lens[List[Option[Int]], Option[Int]] = listLens(i)
   def indexLens(column: Int, row: Int): Lens[List[List[Option[Int]]], Option[Int]] =  rowLens(row) andThen columnLens(column)
@@ -42,12 +43,10 @@ object Sudoku {
    * @param input
    * @return
    */
-  def initialize(input: List[Input]): List[List[Option[Int]]] = {
-    type S[x] = State[List[List[Option[Int]]], x]
-    input.traverse[S, Option[Int]]({
-      case Input(value, column, row) => indexLens(column, row).mods(s => value.some)
-    }) ~> emptyBoard
-  }
+  def initialize(input: List[Input]): List[List[Option[Int]]] =
+    input.traverseS[List[List[Option[Int]]], Option[Int]] {
+      case Input(value, column, row) => indexLens(column, row) := value.some
+    } exec emptyBoard
 
   /**
    * Choose an location on the board, if it exists
@@ -55,7 +54,7 @@ object Sudoku {
   def chooseEmptyIndex(board: List[List[Option[Int]]]): Option[(Int, Int)] = (for {
     row <- n.toStream
     column <- n.toStream
-    if (indexLens(column, row)(board).isEmpty)
+    if (indexLens(column, row).get(board).isEmpty)
   } yield (column, row)).headOption
 
   /**
@@ -71,26 +70,26 @@ object Sudoku {
    * @param board the board
    * @return Either a list of failures or the missing values
    */
-  def findMissingValues(board: List[List[Option[Int]]]): ValidationNEL[String, MissingValues] = {
-    val columnValues: List[ValidationNEL[String, Set[Int]]] = for {
+  def findMissingValues(board: List[List[Option[Int]]]): ValidationNel[String, MissingValues] = {
+    val columnValues: List[ValidationNel[String, Set[Int]]] = for {
       column <- n
-      values = n.flatMap(row => indexLens(column, row)(board))
+      values = n.flatMap(row => indexLens(column, row).get(board))
       valuesAsSet = values.toSet
     } yield
       if (values.length /== valuesAsSet.size)
-        "Column %s has duplicate values %s".format(column, values).fail.liftFailNel
+        "Column %s has duplicate values %s".format(column, values).failNel
       else
-        (nAsSet &~ valuesAsSet).success.liftFailNel
+        (nAsSet &~ valuesAsSet).successNel
 
     val rowValues = for {
       row <- n
-      values = n.flatMap(column => indexLens(column, row)(board))
+      values = n.flatMap(column => indexLens(column, row).get(board))
       valuesAsSet = values.toSet
     } yield
       if (values.length /== valuesAsSet.size)
-        "Row %s has duplicate values %s".format(row, values).fail.liftFailNel
+        "Row %s has duplicate values %s".format(row, values).failNel
       else
-        (nAsSet &~ valuesAsSet).success.liftFailNel
+        (nAsSet &~ valuesAsSet).successNel
 
     val squareValues = for {
       rowSq <- (0 until 3 toList)
@@ -100,23 +99,23 @@ object Sudoku {
         colLocal <- (0 until 3 toList)
         row = (rowSq * 3) + rowLocal
         col = (colSq * 3) + colLocal
-        value <- indexLens(col, row)(board)
+        value <- indexLens(col, row).get(board)
       } yield value
       valuesAsSet = values.toSet
     } yield
       if (values.length /== valuesAsSet.size)
-        "Square %s has duplicate values %s".format(rowSq * 3 + colSq, values).fail.liftFailNel
+        "Square %s has duplicate values %s".format(rowSq * 3 + colSq, values).failNel
       else
-        (nAsSet &~ valuesAsSet).success.liftFailNel
+        (nAsSet &~ valuesAsSet).successNel
 
-    def sequenceVNEL(values: List[ValidationNEL[String, Set[Int]]]): ValidationNEL[String, List[Set[Int]]] =
-      values.sequence[({type l[a] = ValidationNEL[String, a]})#l, Set[Int]]
+    def sequenceVNel(values: List[ValidationNel[String, Set[Int]]]): ValidationNel[String, List[Set[Int]]] =
+      values.sequence[({type l[a] = ValidationNel[String, a]})#l, Set[Int]]
 
-    val combinedResult = sequenceVNEL(columnValues) |@| sequenceVNEL(rowValues) |@| sequenceVNEL(squareValues)
-    combinedResult.apply(MissingValues)
+    val combinedResult = sequenceVNel(columnValues) |@| sequenceVNel(rowValues) |@| sequenceVNel(squareValues)
+    combinedResult(MissingValues)
   }
 
-  def solveBoard(board: List[List[Option[Int]]], depth: Int): ValidationNEL[String, Option[List[List[Option[Int]]]]] = {
+  def solveBoard(board: List[List[Option[Int]]], depth: Int): ValidationNel[String, Option[List[List[Option[Int]]]]] = {
     findMissingValues(board).flatMap {
       case MissingValues(missingColumnValues, missingRowValues, missingSquareValues) =>
         chooseEmptyIndex(board).fold(some(board).successNel[String]) {
