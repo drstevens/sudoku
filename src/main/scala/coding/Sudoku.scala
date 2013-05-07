@@ -13,7 +13,7 @@ object Sudoku {
   //These lens's make it possible to "update" the value at a specific location in the game board.
   //They are really making it easy to return a new game board with the new values
   def listLens[T](i: Int): List[T] @> T =
-    Lens(list => Store(value => (list.take(i) :+ value) ::: list.takeRight(list.length - (i + 1)), list(i)))
+    Lens(list => Store(value => list.updated(i, value), list(i)))
   def rowLens(i: Int):Lens[List[List[Option[Int]]], List[Option[Int]]] = listLens(i)
   def columnLens(i: Int): Lens[List[Option[Int]], Option[Int]] = listLens(i)
   def indexLens(column: Int, row: Int): Lens[List[List[Option[Int]]], Option[Int]] =  rowLens(row) andThen columnLens(column)
